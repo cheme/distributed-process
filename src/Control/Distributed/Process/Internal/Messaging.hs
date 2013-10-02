@@ -25,6 +25,7 @@ import qualified Network.Transport as NT
   )
 import Control.Distributed.Process.Internal.Types
   ( LocalNode(localState, localEndPoint, localCtrlChan)
+  , localNodeId
   , Identifier
   , localConnections
   , localConnectionBetween
@@ -63,10 +64,10 @@ sendPayload node from to implicitReconnect payload = do
         Right ()  -> return True
     Nothing -> return False
   unless didSend $ do
-    writeChan (localCtrlChan node) NCMsg
+    writeChan (localCtrlChan node) (Nothing, NCMsg
       { ctrlMsgSender = to
       , ctrlMsgSignal = Died to DiedDisconnect
-      }
+      })
 
 sendBinary :: Binary a
            => LocalNode

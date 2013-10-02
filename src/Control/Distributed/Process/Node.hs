@@ -281,10 +281,10 @@ forkProcess node proc = modifyMVar (localState node) startProcess
 
           -- [Unified: Table 4, rules termination and exiting]
           modifyMVar_ (localState node) (cleanupProcess pid)
-          writeChan (localCtrlChan node) NCMsg
+          writeChan (localCtrlChan node) (Nothing, NCMsg
             { ctrlMsgSender = ProcessIdentifier pid
             , ctrlMsgSignal = Died (ProcessIdentifier pid) reason
-            }
+            })
         return (tid', lproc)
 
       if lpidCounter lpid == maxBound
@@ -378,9 +378,9 @@ handleIncomingMessages node = go initConnectionState
                 -- We make sure the message is fully decoded when it is enqueued
                 writeTQueue chan $! decode (BSL.fromChunks payload)
               go st
-            Just (_, ToNode) -> do
+            Just (src, ToNode) -> do
               let ctrlMsg = decode . BSL.fromChunks $ payload
-              writeChan ctrlChan $! ctrlMsg
+              writeChan ctrlChan $! (Just src, ctrlMsg)
               go st
             Just (src, Uninit) ->
               case decode (BSL.fromChunks payload) of
@@ -407,9 +407,11 @@ handleIncomingMessages node = go initConnectionState
                     Nothing ->
                       invalidRequest cid st
                 NodeIdentifier nid ->
-                  if nid == localNodeId node
-                    then go (incomingAt cid ^= Just (src, ToNode) $ st)
-                    else invalidRequest cid st
+                  go (incomingAt cid ^= Just (src, ToNode) $ st)
+
+--                  if nid == localNodeId node
+--                    then go (incomingAt cid ^= Just (src, ToNode) $ st)
+--                    else putStrLn ("INVALID NODE ID BUT IS IT NAT address???" ++ show nid ++ "!=" ++ show (localNodeId node) ++ show src) >> invalidRequest cid st
             Nothing ->
               invalidRequest cid st
         NT.ConnectionClosed cid ->
@@ -424,10 +426,10 @@ handleIncomingMessages node = go initConnectionState
         NT.ErrorEvent (NT.TransportError (NT.EventConnectionLost theirAddr) _) -> do
           -- [Unified table 9, rule node_disconnect]
           let nid = NodeIdentifier $ NodeId theirAddr
-          writeChan ctrlChan NCMsg
+          writeChan ctrlChan (Nothing, NCMsg
             { ctrlMsgSender = nid
             , ctrlMsgSignal = Died nid DiedDisconnect
-            }
+            })
           let notLost k = not (k `Set.member` (st ^. incomingFrom theirAddr))
           closeImplicitReconnections node nid
           go ( (incomingFrom theirAddr ^= Set.empty)
@@ -545,11 +547,11 @@ nodeController :: NC ()
 nodeController = do
   node <- ask
   forever' $ do
-    msg  <- liftIO $ readChan (localCtrlChan node)
-
+    (src, msg)  <- liftIO $ readChan (localCtrlChan node)
     -- [Unified: Table 7, rule nc_forward]
     case destNid (ctrlMsgSignal msg) of
-      Just nid' | nid' /= localNodeId node ->
+      Just nid' | nid' /= localNodeId node -> do 
+--        liftIO $ putStrLn ("Forward to : " ++ show nid') -- here infinite loop due to NAT address -> TODO store Nat connected addresses (to name connection address) from line 413.
         liftIO $ sendBinary node
                             (ctrlMsgSender msg)
                             (NodeIdentifier nid')
@@ -574,7 +576,7 @@ nodeController = do
       NCMsg (ProcessIdentifier from) (Register label atnode pid force) ->
         ncEffectRegister from label atnode pid force
       NCMsg (ProcessIdentifier from) (WhereIs label) ->
-        ncEffectWhereIs from label
+        ncEffectWhereIs from label src
       NCMsg from (NamedSend label msg') ->
         ncEffectNamedSend from label msg'
       NCMsg (ProcessIdentifier from) (Kill to reason) ->
@@ -766,15 +768,15 @@ ncEffectRegister from label atnode mPid reregistration = do
 
 
 -- Unified semantics does not explicitly describe 'whereis'
-ncEffectWhereIs :: ProcessId -> String -> NC ()
-ncEffectWhereIs from label = do
+ncEffectWhereIs :: ProcessId -> String -> Maybe NT.EndPointAddress -> NC ()
+ncEffectWhereIs from label src = do
   node <- ask
   mPid <- gets (^. registeredHereFor label)
   liftIO $ sendMessage node
                        (NodeIdentifier (localNodeId node))
                        (ProcessIdentifier from)
                        WithImplicitReconnect
-                       (WhereIsReply label mPid)
+                       (WhereIsReply label (mPid >>= \mPid' -> maybe mPid (\natNodeId -> Just ProcessId { processNodeId =  NodeId natNodeId , processLocalId =  processLocalId mPid'}) src))
 
 -- [Unified: Table 14]
 ncEffectNamedSend :: Identifier -> String -> Message -> NC ()

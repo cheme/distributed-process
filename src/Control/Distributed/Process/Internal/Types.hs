@@ -196,7 +196,7 @@ data LocalNode = LocalNode
     -- | Local node state
   , localState      :: !(StrictMVar LocalNodeState)
     -- | Channel for the node controller
-  , localCtrlChan   :: !(Chan NCMsg)
+  , localCtrlChan   :: !(Chan (Maybe (NT.EndPointAddress), NCMsg))
     -- | Current active system debug/trace log
   , localTracer     :: !Tracer
     -- | Runtime lookup table for supporting closures

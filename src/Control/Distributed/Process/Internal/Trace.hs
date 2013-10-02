@@ -118,5 +118,5 @@ sendTraceMsg node string = do
                          ctrlMsgSender = ProcessIdentifier (emptyPid)
                        , ctrlMsgSignal = (NamedSend "logger" (createMessage msg))
                        }
-  writeChan (localCtrlChan node) traceMsg
+  writeChan (localCtrlChan node) (Nothing, traceMsg)
 
